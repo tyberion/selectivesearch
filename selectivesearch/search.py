@@ -36,14 +36,14 @@ def _sim_colour(r1, r2):
     """
         calculate the sum of histogram intersection of colour
     """
-    return sum([min(a, b) for a, b in zip(r1["hist_c"], r2["hist_c"])])
+    return numpy.vstack((r1["hist_c"], r2["hist_c"])).min(0).sum()
 
 
 def _sim_texture(r1, r2):
     """
         calculate the sum of histogram intersection of texture
     """
-    return sum([min(a, b) for a, b in zip(r1["hist_t"], r2["hist_t"])])
+    return numpy.vstack((r1["hist_t"], r2["hist_t"])).min(0).sum()
 
 
 def _sim_size(r1, r2, imsize):
@@ -65,8 +65,12 @@ def _sim_fill(r1, r2, imsize):
 
 
 def _calc_sim(r1, r2, imsize):
-    return (_sim_colour(r1, r2) + _sim_texture(r1, r2)
-            + _sim_size(r1, r2, imsize) + _sim_fill(r1, r2, imsize))
+    sc = _sim_colour(r1, r2)
+    st = _sim_texture(r1, r2)
+    ss = _sim_size(r1, r2, imsize)
+    sf = _sim_fill(r1, r2, imsize)
+    # return (_sim_colour(r1, r2) + _sim_texture(r1, r2) + _sim_size(r1, r2, imsize) + _sim_fill(r1, r2, imsize))
+    return sc + st + ss + sf
 
 
 def _calc_colour_hist(img):
@@ -176,7 +180,7 @@ def _extract_regions(img):
     tex_grad = _calc_texture_gradient(img)
 
     # pass 3: calculate colour histogram of each region
-    for k, v in list(R.items()):
+    for k in R:
 
         # colour histogram
         masked_pixels = hsv[:, :, :][img[:, :, 3] == k]
@@ -282,17 +286,14 @@ def selective_search(
     while S != {}:
 
         # get highest similarity
-        i, j = sorted(list(S.items()), key=lambda a: a[1])[-1][0]
+        i, j = max(S.items(), key=lambda a: a[1])[0]
 
         # merge corresponding regions
         t = max(R.keys()) + 1.0
         R[t] = _merge_regions(R[i], R[j])
 
         # mark similarities for regions to be removed
-        key_to_delete = []
-        for k, v in list(S.items()):
-            if (i in k) or (j in k):
-                key_to_delete.append(k)
+        key_to_delete = [k for k in S.keys() if (i in k) or (j in k)]
 
         # remove old similarities of related regions
         for k in key_to_delete:
@@ -304,7 +305,7 @@ def selective_search(
             S[(t, n)] = _calc_sim(R[t], R[n], imsize)
 
     regions = []
-    for k, r in list(R.items()):
+    for r in R.values():
         regions.append({
             'rect': (
                 r['min_x'], r['min_y'],
