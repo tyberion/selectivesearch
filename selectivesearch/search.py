@@ -5,7 +5,8 @@ import skimage.color
 import skimage.transform
 import skimage.util
 import skimage.segmentation
-import numpy
+from skimage.measure import regionprops
+import numpy as np
 
 
 # "Selective Search for Object Recognition" by J.R.R. Uijlings et al.
@@ -25,8 +26,8 @@ def _generate_segments(im_orig, scale, sigma, min_size):
         min_size=min_size)
 
     # merge mask channel to the image as a 4th channel
-    im_orig = numpy.append(
-        im_orig, numpy.zeros(im_orig.shape[:2])[:, :, numpy.newaxis], axis=2)
+    im_orig = np.append(
+        im_orig, np.zeros(im_orig.shape[:2])[:, :, np.newaxis], axis=2)
     im_orig[:, :, 3] = im_mask
 
     return im_orig
@@ -36,14 +37,14 @@ def _sim_colour(r1, r2):
     """
         calculate the sum of histogram intersection of colour
     """
-    return numpy.vstack((r1["hist_c"], r2["hist_c"])).min(0).sum()
+    return np.vstack((r1["hist_c"], r2["hist_c"])).min(0).sum()
 
 
 def _sim_texture(r1, r2):
     """
         calculate the sum of histogram intersection of texture
     """
-    return numpy.vstack((r1["hist_t"], r2["hist_t"])).min(0).sum()
+    return np.vstack((r1["hist_t"], r2["hist_t"])).min(0).sum()
 
 
 def _sim_size(r1, r2, imsize):
@@ -58,19 +59,14 @@ def _sim_fill(r1, r2, imsize):
         calculate the fill similarity over the image
     """
     bbsize = (
-        (max(r1["max_x"], r2["max_x"]) - min(r1["min_x"], r2["min_x"]))
-        * (max(r1["max_y"], r2["max_y"]) - min(r1["min_y"], r2["min_y"]))
+        (max(r1["max_x"], r2["max_x"]) - min(r1["min_x"], r2["min_x"])) *
+        (max(r1["max_y"], r2["max_y"]) - min(r1["min_y"], r2["min_y"]))
     )
     return 1.0 - (bbsize - r1["size"] - r2["size"]) / imsize
 
 
 def _calc_sim(r1, r2, imsize):
-    sc = _sim_colour(r1, r2)
-    st = _sim_texture(r1, r2)
-    ss = _sim_size(r1, r2, imsize)
-    sf = _sim_fill(r1, r2, imsize)
-    # return (_sim_colour(r1, r2) + _sim_texture(r1, r2) + _sim_size(r1, r2, imsize) + _sim_fill(r1, r2, imsize))
-    return sc + st + ss + sf
+    return (_sim_colour(r1, r2) + _sim_texture(r1, r2) + _sim_size(r1, r2, imsize) + _sim_fill(r1, r2, imsize))
 
 
 def _calc_colour_hist(img):
@@ -85,7 +81,7 @@ def _calc_colour_hist(img):
     """
 
     BINS = 25
-    hist = numpy.array([])
+    hist = np.array([])
 
     for colour_channel in (0, 1, 2):
 
@@ -93,8 +89,8 @@ def _calc_colour_hist(img):
         c = img[:, colour_channel]
 
         # calculate histogram for each colour and join to the result
-        hist = numpy.concatenate(
-            [hist] + [numpy.histogram(c, BINS, (0.0, 255.0))[0]])
+        hist = np.concatenate(
+            [hist] + [np.histogram(c, BINS, (0.0, 255.0))[0]])
 
     # L1 normalize
     hist = hist / len(img)
@@ -111,7 +107,7 @@ def _calc_texture_gradient(img):
 
         output will be [height(*)][width(*)]
     """
-    ret = numpy.zeros((img.shape[0], img.shape[1], img.shape[2]))
+    ret = np.zeros((img.shape[0], img.shape[1], img.shape[2]))
 
     for colour_channel in (0, 1, 2):
         ret[:, :, colour_channel] = skimage.feature.local_binary_pattern(
@@ -130,7 +126,7 @@ def _calc_texture_hist(img):
     """
     BINS = 10
 
-    hist = numpy.array([])
+    hist = np.array([])
 
     for colour_channel in (0, 1, 2):
 
@@ -139,8 +135,8 @@ def _calc_texture_hist(img):
 
         # calculate histogram for each orientation and concatenate them all
         # and join to the result
-        hist = numpy.concatenate(
-            [hist] + [numpy.histogram(fd, BINS, (0.0, 1.0))[0]])
+        hist = np.concatenate(
+            [hist] + [np.histogram(fd, BINS, (0.0, 1.0))[0]])
 
     # L1 Normalize
     hist = hist / len(img)
@@ -150,45 +146,38 @@ def _calc_texture_hist(img):
 
 def _extract_regions(img):
 
-    R = {}
-
     # get hsv image
     hsv = skimage.color.rgb2hsv(img[:, :, :3])
+    region_mask = img[:, :, 3]
 
-    # pass 1: count pixel positions
-    for y, i in enumerate(img):
-
-        for x, (r, g, b, l) in enumerate(i):
-
-            # initialize a new region
-            if l not in R:
-                R[l] = {
-                    "min_x": 0xffff, "min_y": 0xffff,
-                    "max_x": 0, "max_y": 0, "labels": [l]}
-
-            # bounding box
-            if R[l]["min_x"] > x:
-                R[l]["min_x"] = x
-            if R[l]["min_y"] > y:
-                R[l]["min_y"] = y
-            if R[l]["max_x"] < x:
-                R[l]["max_x"] = x
-            if R[l]["max_y"] < y:
-                R[l]["max_y"] = y
-
-    # pass 2: calculate texture gradient
+    # pass 1: calculate texture gradient
     tex_grad = _calc_texture_gradient(img)
 
-    # pass 3: calculate colour histogram of each region
-    for k in R:
+    # pass 2: count pixel positions
+    regions = regionprops(np.uint32(region_mask + 1))
+
+    # initialize new regions
+    R = {region.label: {
+        "labels": [region.label - 1],
+        "min_y": region.bbox[0],
+        "min_x": region.bbox[1],
+        "max_y": region.bbox[2],
+        "max_x": region.bbox[3],
+        "size": region.image.sum(),
+    } for region in regions}
+
+    for region in regions:
+        # pass 3: calculate colour histogram of each region
 
         # colour histogram
-        masked_pixels = hsv[:, :, :][img[:, :, 3] == k]
-        R[k]["size"] = len(masked_pixels / 4)
-        R[k]["hist_c"] = _calc_colour_hist(masked_pixels)
+        masked_pixels = hsv[region.bbox[0]:region.bbox[2], region.bbox[1]:region.bbox[3], :]
+        masked_pixels = masked_pixels[region.image]
+        R[region.label]["hist_c"] = _calc_colour_hist(masked_pixels)
 
         # texture histogram
-        R[k]["hist_t"] = _calc_texture_hist(tex_grad[:, :][img[:, :, 3] == k])
+        masked_pixels = tex_grad[region.bbox[0]:region.bbox[2], region.bbox[1]:region.bbox[3], :]
+        masked_pixels = masked_pixels[region.image]
+        R[region.label]["hist_t"] = _calc_texture_hist(masked_pixels)
 
     return R
 
@@ -196,16 +185,10 @@ def _extract_regions(img):
 def _extract_neighbours(regions):
 
     def intersect(a, b):
-        if (a["min_x"] < b["min_x"] < a["max_x"]
-                and a["min_y"] < b["min_y"] < a["max_y"]) or (
-            a["min_x"] < b["max_x"] < a["max_x"]
-                and a["min_y"] < b["max_y"] < a["max_y"]) or (
-            a["min_x"] < b["min_x"] < a["max_x"]
-                and a["min_y"] < b["max_y"] < a["max_y"]) or (
-            a["min_x"] < b["min_x"] < a["max_x"]
-                and a["min_y"] < b["max_y"] < a["max_y"]):
-            return True
-        return False
+        return ((a["min_x"] < b["min_x"] < a["max_x"] and a["min_y"] < b["min_y"] < a["max_y"]) or
+                (a["min_x"] < b["max_x"] < a["max_x"] and a["min_y"] < b["max_y"] < a["max_y"]) or
+                (a["min_x"] < b["min_x"] < a["max_x"] and a["min_y"] < b["max_y"] < a["max_y"]) or
+                (a["min_x"] < b["min_x"] < a["max_x"] and a["min_y"] < b["max_y"] < a["max_y"]))
 
     R = list(regions.items())
     neighbours = []
