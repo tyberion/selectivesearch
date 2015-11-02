@@ -37,14 +37,14 @@ def _sim_colour(r1, r2):
     """
         calculate the sum of histogram intersection of colour
     """
-    return np.vstack((r1["hist_c"], r2["hist_c"])).min(0).sum()
+    return np.min((r1["hist_c"], r2["hist_c"]), axis=0).sum()
 
 
 def _sim_texture(r1, r2):
     """
         calculate the sum of histogram intersection of texture
     """
-    return np.vstack((r1["hist_t"], r2["hist_t"])).min(0).sum()
+    return np.min((r1["hist_t"], r2["hist_t"]), axis=0).sum()
 
 
 def _sim_size(r1, r2, imsize):
